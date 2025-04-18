@@ -22,7 +22,7 @@ class TradingAgent:
     def __init__(self, state_size, action_size):
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = deque(maxlen=RL_CONFIG['memory_size'])
+        self.memory = deque(maxlen=100000)  # Fixed memory size
         self.batch_size = RL_CONFIG['batch_size']
         
         self.gamma = RL_CONFIG['gamma']

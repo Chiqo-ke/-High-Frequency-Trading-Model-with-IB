@@ -29,7 +29,7 @@ RL_CONFIG = {
     'epsilon_start': 1.0,
     'epsilon_end': 0.01,
     'epsilon_decay': 0.995,
-    'batch_size': 32,
+    'batch_size': 32
 }
 
 # Technical Indicators

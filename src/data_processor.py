@@ -37,16 +37,15 @@ class DataProcessor:
     def load_data(self, filepath: str) -> pd.DataFrame:
         """Load and preprocess data with improved error handling"""
         try:
-            # Define expected columns
             expected_columns = ['Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'Spread']
             
-            # Read CSV with proper format and handle whitespace issues
+            # Update deprecated delim_whitespace to sep
             df = pd.read_csv(filepath, 
                            header=None, 
                            names=expected_columns,
-                           delim_whitespace=True,  # Handle variable whitespace
-                           skipinitialspace=True,  # Skip leading whitespace
-                           skip_blank_lines=True)  # Skip empty lines
+                           sep='\s+',  # Replace delim_whitespace with sep
+                           skipinitialspace=True,
+                           skip_blank_lines=True)
             
             # Validate data
             if df.empty:
@@ -62,6 +61,11 @@ class DataProcessor:
             
             # Remove any rows with NaN values after conversion
             df = df.dropna()
+            
+            # Ensure Time column is unique before technical analysis
+            df = df.drop_duplicates(subset=['Time'], keep='first')
+            df.set_index('Time', inplace=True)
+            df.sort_index(inplace=True)
             
             self.logger.info(f"Successfully loaded data with shape: {df.shape}")
             return df
