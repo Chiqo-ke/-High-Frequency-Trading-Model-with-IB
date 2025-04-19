@@ -24,12 +24,18 @@ TRADING_SESSIONS = {
 
 # RL Configuration
 RL_CONFIG = {
-    'learning_rate': 0.001,
-    'gamma': 0.99,
+    'learning_rate': 0.0003,  # Reduced learning rate
+    'gamma': 0.95,           # Slightly reduced discount factor
     'epsilon_start': 1.0,
-    'epsilon_end': 0.01,
-    'epsilon_decay': 0.995,
-    'batch_size': 32
+    'epsilon_end': 0.05,     # Higher minimum exploration
+    'epsilon_decay': 0.997,  # Slower epsilon decay
+    'batch_size': 64,        # Larger batch size
+    'memory_size': 100000,   # Increased replay memory
+    'min_memory_size': 1000, # Minimum samples before training
+    'target_update_freq': 5, # Target network update frequency
+    'reward_scaling': 0.1,   # Scale rewards for better stability
+    'gradient_clip': 1.0,    # Clip gradients
+    'validation_episodes': 5  # Number of validation episodes
 }
 
 # Technical Indicators
