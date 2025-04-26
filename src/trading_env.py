@@ -13,6 +13,8 @@ class ForexTradingEnv(gym.Env):
         self.current_step = 0
         self.position = None
         self.trades_history = []
+        self.entry_time = None
+        self.entry_price = None
         
         # Trading metrics
         self.total_pnl = 0
@@ -74,21 +76,27 @@ class ForexTradingEnv(gym.Env):
             technical_features
         ))
         return state.astype(np.float32)
+    
+    def _is_trading_allowed(self) -> bool:
+        """Check if trading is allowed in current session"""
+        current_data = self.df.iloc[self.current_step]
+        return current_data['Trading_Session']
         
     def step(self, action: int) -> Tuple[np.array, float, bool, Dict]:
         # Get current price data
         current_price = self.df.iloc[self.current_step]['Close']
         reward = 0
         
-        # Execute trading action
-        if action == 0 and self.position is None:  # Buy
-            self.position = 'long'
-            self.entry_price = current_price
-            self.entry_step = self.current_step
-        elif action == 1 and self.position is None:  # Sell
-            self.position = 'short'
-            self.entry_price = current_price
-            self.entry_step = self.current_step
+        # Execute trading action only during trading sessions
+        if self._is_trading_allowed():
+            if action == 0 and self.position is None:  # Buy
+                self.position = 'long'
+                self.entry_price = current_price
+                self.entry_time = self.df.iloc[self.current_step].name
+            elif action == 1 and self.position is None:  # Sell
+                self.position = 'short'
+                self.entry_price = current_price
+                self.entry_time = self.df.iloc[self.current_step].name
         
         # Move to next step
         self.current_step += 1
@@ -118,12 +126,18 @@ class ForexTradingEnv(gym.Env):
                 'exit_price': next_price,
                 'reward': reward,
                 'pnl': self.total_pnl,
-                'drawdown': self.current_drawdown
+                'drawdown': self.current_drawdown,
+                'entry_time': self.entry_time,
+                'exit_time': self.df.iloc[self.current_step].name,
+                'London_Session': self.df.iloc[self.current_step]['London_Session'],
+                'NewYork_Session': self.df.iloc[self.current_step]['NewYork_Session'],
+                'Overlap_Session': self.df.iloc[self.current_step]['Overlap_Session']
             })
             
             # Close position
             self.position = None
             self.entry_price = None
+            self.entry_time = None
         
         info = {
             'trades': len(self.trades_history),
@@ -139,6 +153,7 @@ class ForexTradingEnv(gym.Env):
         self.current_step = 0
         self.position = None
         self.entry_price = None
+        self.entry_time = None
         self.trades_history = []
         self.total_pnl = 0
         self.max_drawdown = 0

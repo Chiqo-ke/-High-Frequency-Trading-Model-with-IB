@@ -1,7 +1,11 @@
 import pandas as pd
+import numpy as np
 import pandas_ta as ta
-from typing import Dict, List
+import pytz
+from datetime import datetime, time
 import logging
+from pathlib import Path
+from typing import Dict, List
 import os
 from config import TECHNICAL_INDICATORS
 
@@ -9,7 +13,27 @@ class DataProcessor:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.processed_data_dir = "processed_data"
+        # Trading sessions in UTC
+        self.sessions = {
+            'London': {
+                'start': time(7, 0),  # 7:00 UTC (8:00 London)
+                'end': time(16, 0)    # 16:00 UTC (17:00 London)
+            },
+            'NewYork': {
+                'start': time(13, 0),  # 13:00 UTC (8:00 NY)
+                'end': time(22, 0)     # 22:00 UTC (17:00 NY)
+            }
+        }
+        print("\n[DataProcessor] Initialized with trading sessions")
         
+    def _is_active_session(self, timestamp) -> dict:
+        """Check if timestamp is within trading sessions"""
+        current_time = timestamp.time()
+        return {
+            'London': self.sessions['London']['start'] <= current_time <= self.sessions['London']['end'],
+            'NewYork': self.sessions['NewYork']['start'] <= current_time <= self.sessions['NewYork']['end']
+        }
+
     def standardize_file(self, filepath: str) -> str:
         """Standardize CSV file with proper headers and return path to processed file"""
         try:
@@ -68,6 +92,19 @@ class DataProcessor:
             df.sort_index(inplace=True)
             
             self.logger.info(f"Successfully loaded data with shape: {df.shape}")
+            
+            # Add trading session flags
+            print("5. Adding trading session information...")
+            df['Time'] = pd.to_datetime(df.index)
+            df['London_Session'] = df['Time'].apply(lambda x: self._is_active_session(x)['London'])
+            df['NewYork_Session'] = df['Time'].apply(lambda x: self._is_active_session(x)['NewYork'])
+            df['Overlap_Session'] = df['London_Session'] & df['NewYork_Session']
+            df['Trading_Session'] = df['London_Session'] | df['NewYork_Session']
+            
+            # Additional session-based features
+            df['Hour_of_Day'] = df['Time'].dt.hour
+            df['Day_of_Week'] = df['Time'].dt.dayofweek
+            
             return df
             
         except Exception as e:

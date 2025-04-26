@@ -4,11 +4,14 @@ from pathlib import Path
 import logging
 from datetime import datetime
 import torch
+from typing import Dict, List, Tuple
+import matplotlib.pyplot as plt
 
 from data_processor import DataProcessor
 from trading_env import ForexTradingEnv
 from agent import TradingAgent
 from config import DATA_DIR, MODELS_DIR, RL_CONFIG
+from utils.metrics import TradingMetrics
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -41,25 +44,24 @@ def setup_training(timeframe: str):
     return train_env, val_env, agent, df
 
 def train_model(timeframe: str, episodes: int = 1000):
-    """Train the trading model with improved stability measures"""
-    # Setup environments
+    """Train the model with early stopping and enhanced metrics"""
     train_env, val_env, agent, df = setup_training(timeframe)
     
-    # Initialize metrics
+    # Initialize tracking variables
     best_reward = float('-inf')
-    patience = 20
+    patience = 15
     no_improvement = 0
     training_history = []
+    episode_rewards = []
     
     # Warmup replay memory
     logger.info("Warming up replay memory...")
     agent.warmup_memory(train_env, num_actions=RL_CONFIG['min_memory_size'])
     
+    # Training loop
     for episode in range(episodes):
-        # Training episode
         state = train_env.reset()
-        total_reward = 0
-        episode_loss = []
+        episode_reward = 0
         done = False
         
         while not done:
@@ -67,64 +69,119 @@ def train_model(timeframe: str, episodes: int = 1000):
             next_state, reward, done, info = train_env.step(action)
             
             agent.remember(state, action, reward, next_state, done)
-            loss = agent.train(episode_reward=total_reward)
-            if loss is not None:
-                episode_loss.append(loss)
+            loss = agent.train(episode_reward=episode_reward)
             
             state = next_state
-            total_reward += reward
+            episode_reward += reward
         
-        # Validation phase every 10 episodes
-        if episode % 10 == 0:
-            val_rewards = []
-            for _ in range(RL_CONFIG['validation_episodes']):
-                val_reward = validate_episode(val_env, agent)
-                val_rewards.append(val_reward)
-            avg_val_reward = np.mean(val_rewards)
-            
-            # Save model if validation improves
-            if avg_val_reward > best_reward:
-                best_reward = avg_val_reward
-                model_path = MODELS_DIR / f"best_model_{timeframe}.pth"
-                torch.save({
-                    'episode': episode,
-                    'model_state_dict': agent.model.state_dict(),
-                    'optimizer_state_dict': agent.optimizer.state_dict(),
-                    'best_reward': best_reward,
-                    'config': RL_CONFIG
-                }, model_path)
-                logger.info(f"New best model saved with validation reward: {best_reward:.2f}")
-                no_improvement = 0
-            else:
-                no_improvement += 1
-        
-        # Log episode metrics
-        avg_loss = np.mean(episode_loss) if episode_loss else 0
-        metrics = {
+        # Calculate metrics
+        metrics = TradingMetrics.calculate_metrics(train_env.trades_history, [episode_reward])
+        training_history.append({
             'episode': episode + 1,
-            'total_reward': total_reward,
-            'avg_loss': avg_loss,
-            'epsilon': agent.epsilon,
-            'trades': train_env.trades_history[-1]['trades'] if train_env.trades_history else 0,
-            'win_rate': train_env.trades_history[-1]['win_rate'] if train_env.trades_history else 0
-        }
-        training_history.append(metrics)
+            'total_reward': episode_reward,
+            'metrics': metrics
+        })
         
-        # Print progress
-        logger.info(
-            f"Episode {episode + 1}/{episodes}, "
-            f"Total Reward: {total_reward:.2f}, "
-            f"Avg Loss: {avg_loss:.4f}, "
-            f"Epsilon: {agent.epsilon:.3f}, "
-            f"Win Rate: {metrics['win_rate']:.2%}"
-        )
+        # Log detailed metrics
+        logger.info(f"""Episode {episode + 1}/{episodes}:
+            Total Reward: {episode_reward:.2f}
+            Win Rate: {metrics['win_rate']:.2%}
+            Trades: {metrics['total_trades']}
+            Session Performance:
+                London: {metrics['session_metrics'].get('London', {}).get('win_rate', 0):.2%}
+                New York: {metrics['session_metrics'].get('NewYork', {}).get('win_rate', 0):.2%}
+                Overlap: {metrics['session_metrics'].get('Overlap', {}).get('win_rate', 0):.2%}
+        """)
         
-        # Early stopping
+        # Save best model with full metrics
+        if episode_reward > best_reward:
+            best_reward = episode_reward
+            model_path = MODELS_DIR / f"best_model_{timeframe}.pth"
+            torch.save({
+                'episode': episode,
+                'model_state_dict': agent.model.state_dict(),
+                'optimizer_state_dict': agent.optimizer.state_dict(),
+                'metrics': metrics,
+                'hyperparameters': RL_CONFIG
+            }, model_path)
+            logger.info(f"New best model saved with reward: {best_reward:.2f}")
+            no_improvement = 0
+        else:
+            no_improvement += 1
+        
+        # Early stopping check
         if no_improvement >= patience:
             logger.info(f"Early stopping triggered after {patience} episodes without improvement")
             break
     
+    # Plot training metrics
+    plot_training_metrics(training_history, timeframe)
     return training_history
+
+def plot_training_metrics(history: List[Dict], timeframe: str):
+    """Visualize training metrics"""
+    plt.style.use('seaborn')
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+    
+    # Extract metrics
+    episodes = [h['episode'] for h in history]
+    rewards = [h['total_reward'] for h in history]
+    win_rates = [h['metrics']['win_rate'] for h in history]
+    
+    # Plot rewards
+    ax1.plot(episodes, rewards)
+    ax1.set_title('Total Reward per Episode')
+    ax1.set_xlabel('Episode')
+    ax1.set_ylabel('Reward')
+    
+    # Plot win rates
+    ax2.plot(episodes, win_rates)
+    ax2.set_title('Win Rate per Episode')
+    ax2.set_xlabel('Episode')
+    ax2.set_ylabel('Win Rate')
+    
+    # Plot session win rates
+    session_win_rates = {
+        'London': [h['metrics']['session_metrics'].get('London', {}).get('win_rate', 0) for h in history],
+        'NewYork': [h['metrics']['session_metrics'].get('NewYork', {}).get('win_rate', 0) for h in history],
+        'Overlap': [h['metrics']['session_metrics'].get('Overlap', {}).get('win_rate', 0) for h in history]
+    }
+    
+    for session, rates in session_win_rates.items():
+        ax3.plot(episodes, rates, label=session)
+    ax3.set_title('Session Win Rates')
+    ax3.set_xlabel('Episode')
+    ax3.set_ylabel('Win Rate')
+    ax3.legend()
+    
+    # Plot drawdown
+    drawdowns = [h['metrics'].get('max_drawdown', 0) for h in history]
+    ax4.plot(episodes, drawdowns)
+    ax4.set_title('Maximum Drawdown')
+    ax4.set_xlabel('Episode')
+    ax4.set_ylabel('Drawdown')
+    
+    plt.tight_layout()
+    plt.savefig(f'training_metrics_{timeframe}.png')
+    plt.close()
+
+def validate_model(env: ForexTradingEnv, agent: TradingAgent, episodes: int = 10) -> Dict:
+    """Validate model performance"""
+    validation_rewards = []
+    validation_trades = []
+    
+    for _ in range(episodes):
+        state = env.reset()
+        done = False
+        while not done:
+            action = agent.act(state, training=False)
+            next_state, reward, done, info = env.step(action)
+            state = next_state
+            if info.get('trade_executed', False):
+                validation_trades.append(info['trade_info'])
+        validation_rewards.append(env.total_pnl)
+    
+    return TradingMetrics.calculate_metrics(validation_trades, validation_rewards)
 
 def validate_episode(env, agent):
     """Run a validation episode"""
