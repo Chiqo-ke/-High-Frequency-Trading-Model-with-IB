@@ -1,9 +1,0 @@
-redis
-pandas
-matplotlib
-pandas-ta
-numpy
-schedule
-tvdatafeed
-logging
-```
